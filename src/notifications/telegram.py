@@ -47,6 +47,27 @@ class TelegramNotifier:
             logger.exception("Telegram notification error")
             return False
 
+    def notify_startup(self, mode: str, symbol: str, strategy: str,
+                       capital: float, lot_size: int) -> None:
+        msg = (
+            f"🤖 *BOT STARTED*\n"
+            f"Mode: `{mode.upper()}`\n"
+            f"Symbol: `{symbol}`\n"
+            f"Strategy: `{strategy}`\n"
+            f"Capital: `₹{capital:,.0f}`\n"
+            f"Lot: `{lot_size}`"
+        )
+        self.send(msg)
+
+    def notify_shutdown(self, trades_count: int, total_pnl: float) -> None:
+        emoji = "📈" if total_pnl >= 0 else "📉"
+        msg = (
+            f"{emoji} *BOT STOPPED*\n"
+            f"Trades: `{trades_count}`\n"
+            f"PnL: `₹{total_pnl:+,.2f}`"
+        )
+        self.send(msg)
+
     def notify_entry(self, trade: Trade) -> None:
         if not self.config.telegram.on_entry:
             return

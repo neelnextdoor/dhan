@@ -92,7 +92,7 @@ logging:
 
 # --- Telegram Alerts ---
 telegram:
-  enabled: false
+  enabled: true
   on_entry: true
   on_exit: true
   on_error: true

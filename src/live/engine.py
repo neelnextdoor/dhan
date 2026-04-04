@@ -92,6 +92,15 @@ class LiveEngine:
         logger.info("Loaded %d candles (%s to %s)",
                      len(candles), candles.index[0], candles.index[-1])
         self._last_candle_count = len(candles)
+
+        self.telegram.notify_startup(
+            mode=self.mode.value,
+            symbol=self.config.symbol,
+            strategy=self.strategy.name(),
+            capital=self.config.risk.capital_per_trade,
+            lot_size=self.config.risk.lot_size,
+        )
+
         self._running = True
         self._run_loop()
 
@@ -433,7 +442,9 @@ class LiveEngine:
 
         trades = self.position_manager.get_all_trades()
         total_pnl = sum(t.pnl for t in trades)
-        self.telegram.notify_daily_summary(trades, total_pnl)
+        if trades:
+            self.telegram.notify_daily_summary(trades, total_pnl)
+        self.telegram.notify_shutdown(len(trades), total_pnl)
 
         if self._pending_order_ids:
             logger.warning("Pending orders at shutdown: %s", self._pending_order_ids)
