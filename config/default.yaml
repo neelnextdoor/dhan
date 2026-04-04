@@ -1,0 +1,121 @@
+# ============================================================
+# Dhan Algo Trading System — Master Configuration
+# ============================================================
+
+# --- Underlying Symbol (for signal generation) ---
+symbol: NIFTY
+exchange: IDX_I                  # IDX_I for indices, NSE for equities, NFO for F&O
+instrument_type: INDEX          # INDEX, EQUITY, FUTCOM, OPTIDX
+security_id: "13"               # Dhan security ID for the UNDERLYING
+expiry: ""                      # For F&O: YYYY-MM-DD or leave empty for nearest
+
+# --- Timeframe ---
+timeframe: 5m                   # 1m, 5m, 15m, 30m, 1h
+lookback_candles: 200           # Number of historical candles to fetch
+
+# --- EMA Configuration ---
+ema:
+  primary_period: 7             # Primary EMA (trigger)
+  short_period: 9               # Short EMA for crossover confirmation
+  long_period: 21               # Long EMA for crossover confirmation
+  use_crossover_confirmation: true
+
+# --- Entry Rules ---
+entry:
+  mode: both                    # breakout | pullback | both
+  confirm_candle_close: true    # Wait for candle close, not just wick
+  volume_confirmation: false
+  volume_multiplier: 1.5        # Current volume > multiplier * avg volume
+
+# --- Sideways Market Filter ---
+sideways_filter:
+  enabled: true
+  method: atr                   # atr | candle_range
+  atr_period: 14
+  atr_threshold: 0.1            # Minimum ATR as % of price (0.1 for 5m, 0.5 for daily)
+  candle_range_min: 0.05        # Minimum candle range as % of price
+
+# --- Options (You are an option BUYER) ---
+# LONG signal → BUY CALL (CE)
+# SHORT signal → BUY PUT (PE)
+# Exit → SELL the option
+options:
+  enabled: true
+  strike_selection: atm           # atm | itm_1 | itm_2 | otm_1 | otm_2 | fixed
+  strike_offset: 0                # Manual offset (in strike intervals) from ATM
+  fixed_strike: 0                 # Only used if strike_selection is 'fixed'
+  expiry_preference: weekly       # weekly | monthly | nearest
+  strike_interval: 50             # NIFTY=50, BANKNIFTY=100
+  premium_sl_pct: 15              # SL as % of premium (exit if premium drops 15%)
+  premium_target_pct: 25          # Target as % of premium (exit at 25% profit)
+  use_premium_based_sl: true      # true = SL/TP on premium; false = SL/TP from strategy signal
+
+# --- Exit Strategy ---
+exit:
+  stop_loss:
+    type: fixed_points          # fixed_points | fixed_pct | swing | ema_breach
+    value: 30                   # Points for fixed_points, % for fixed_pct
+  target:
+    type: risk_reward           # risk_reward | fixed_points | fixed_pct
+    risk_reward_ratio: 1.5      # e.g., 1:1.5
+    value: 100                  # Points or % if not using risk_reward
+  trailing_sl:
+    enabled: true
+    activation_pct: 10          # Start trailing when premium profit > 10%
+    trail_pct: 5                # Trail 5% below peak premium
+  time_based_exit:
+    enabled: true
+    exit_time: "15:15"          # Exit all positions by this time (IST)
+  exit_on_opposite_signal: true
+
+# --- Risk Management ---
+risk:
+  max_trades_per_day: 10
+  max_loss_per_day: 2000        # INR — kill switch (10% of capital)
+  capital_per_trade: 20000      # INR
+  lot_size: 65                  # NIFTY min lot = 65 (premium ~₹150-250 × 65 = ₹3,750-6,250)
+  max_open_positions: 1
+  risk_per_trade_pct: 2.0       # % of capital per trade
+
+# --- Trading Hours (IST) ---
+trading_hours:
+  start: "09:20"                # Allow entry after 09:20
+  end: "14:30"                  # No new entries after 14:30 (avoid late-day traps)
+  force_exit: "15:25"           # Force close all by 15:25
+
+# --- Logging ---
+logging:
+  level: INFO                   # DEBUG, INFO, WARNING, ERROR
+  console: true
+  file: true
+  log_dir: logs
+
+# --- Telegram Alerts ---
+telegram:
+  enabled: false
+  on_entry: true
+  on_exit: true
+  on_error: true
+  daily_summary: true
+
+# --- Webhook / Postback ---
+webhook:
+  enabled: false                # Set true to start the postback listener
+  host: "0.0.0.0"              # Bind address
+  port: 8443                   # Port for the webhook server
+  auth_token: ""               # Optional: shared secret for X-Webhook-Token header
+  log_all_updates: true        # Log every postback payload
+
+# --- Paper Trading ---
+paper_trading:
+  initial_capital: 20000
+  slippage_pct: 0.05            # Simulated slippage
+
+# --- Backtest ---
+backtest:
+  data_source: dhan              # dhan | csv
+  csv_path: ""                   # Path to CSV if data_source is csv
+  start_date: "2025-01-01"
+  end_date: "2025-12-31"
+  initial_capital: 20000
+  commission_per_trade: 20       # INR per trade
