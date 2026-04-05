@@ -8,13 +8,18 @@ import numpy as np
 import pandas as pd
 
 from src.core.config import AppConfig
-from src.core.constants import ExitReason, OptionType, OrderSide, SignalType
+from src.core.constants import ExitReason, OptionType, OrderSide, SignalType, TradeGrade
 from src.execution.position_manager import PositionManager
-from src.indicators.ema import ema, is_bullish_crossover, is_bearish_crossover
-from src.indicators.atr import compute_atr, is_market_trending
+from src.indicators.ema import (
+    ema, is_bullish_crossover, is_bearish_crossover,
+    ema_alignment_score, ema_slope, is_ema_flat,
+)
+from src.indicators.atr import compute_atr, is_market_trending, is_range_bound, atr_expansion
 from src.options.contract_selector import ContractSelector, estimate_option_premium
 from src.risk.risk_manager import RiskManager
 from src.strategy.ema_strategy import EMAStrategy
+from src.strategy.signals import Signal
+from src.utils.brokerage import compute_round_trip_costs, compute_option_buy_costs
 
 
 def _make_candles(n: int = 100, trend: str = "up", base: float = 20000.0) -> pd.DataFrame:
@@ -238,17 +243,91 @@ class TestEMAStrategy(unittest.TestCase):
         self.assertIn("ema_7", result.columns)
         self.assertIn("ema_9", result.columns)
         self.assertIn("ema_21", result.columns)
+        self.assertIn("ema_50", result.columns)
 
     def test_generates_signals(self):
         config = AppConfig.load()
         config.ema.use_crossover_confirmation = False
         config.sideways_filter.enabled = False
+        config.multi_timeframe.enabled = False
+        config.entry.min_grade = "C"
         strategy = EMAStrategy(config)
 
         df = _make_candles(200, trend="up")
         signal = strategy.generate_signal(df)
         self.assertIsNotNone(signal)
         self.assertIn(signal.type, [SignalType.LONG, SignalType.NO_SIGNAL])
+
+
+class TestTradeGrading(unittest.TestCase):
+    def test_signal_grade_filtering(self):
+        sig = Signal(SignalType.LONG, 22000.0, datetime.now(),
+                     grade=TradeGrade.A, confidence=0.7)
+        self.assertTrue(sig.passes_grade_filter(TradeGrade.A))
+        self.assertTrue(sig.passes_grade_filter(TradeGrade.B))
+        self.assertFalse(sig.passes_grade_filter(TradeGrade.A_PLUS))
+
+    def test_a_plus_passes_all(self):
+        sig = Signal(SignalType.SHORT, 22000.0, datetime.now(),
+                     grade=TradeGrade.A_PLUS, confidence=0.9)
+        for grade in TradeGrade:
+            self.assertTrue(sig.passes_grade_filter(grade))
+
+
+class TestEMAAdvanced(unittest.TestCase):
+    def test_alignment_score_bullish(self):
+        df = _make_candles(100, trend="up")
+        from src.indicators.ema import compute_emas
+        df = compute_emas(df, 7, 9, 21, 50)
+        score = ema_alignment_score(df, "ema_7", "ema_9", "ema_21", "ema_50")
+        self.assertGreater(score, 0)
+
+    def test_ema_slope_positive_in_uptrend(self):
+        df = _make_candles(100, trend="up")
+        from src.indicators.ema import compute_emas
+        df = compute_emas(df, 7, 9, 21, 50)
+        slope = ema_slope(df, "ema_7", lookback=5)
+        self.assertGreater(slope, 0)
+
+    def test_ema_flat_in_sideways(self):
+        df = _make_candles(100, trend="sideways")
+        from src.indicators.ema import compute_emas
+        df = compute_emas(df, 7, 9, 21, 50)
+        flat = is_ema_flat(df, "ema_21", lookback=10, flat_threshold=0.01)
+        self.assertTrue(flat)
+
+
+class TestBrokerageModel(unittest.TestCase):
+    def test_buy_costs(self):
+        from src.core.config import BrokerageConfig
+        cfg = BrokerageConfig(enabled=True)
+        costs = compute_option_buy_costs(200.0, 50, cfg)
+        self.assertGreater(costs.total, 0)
+        self.assertEqual(costs.stt, 0.0)  # No STT on buy side
+
+    def test_round_trip_costs(self):
+        from src.core.config import BrokerageConfig
+        cfg = BrokerageConfig(enabled=True)
+        total = compute_round_trip_costs(200.0, 250.0, 50, cfg)
+        self.assertGreater(total, 0)
+
+    def test_disabled_brokerage(self):
+        from src.core.config import BrokerageConfig
+        cfg = BrokerageConfig(enabled=False)
+        total = compute_round_trip_costs(200.0, 250.0, 50, cfg)
+        self.assertEqual(total, 0.0)
+
+
+class TestRangeBound(unittest.TestCase):
+    def test_sideways_detected(self):
+        df = _make_candles(50, trend="sideways", base=22000.0)
+        self.assertTrue(is_range_bound(df, lookback=20, range_pct=5.0))
+
+    def test_trending_not_range_bound(self):
+        df = _make_candles(100, trend="up", base=20000.0)
+        result = is_range_bound(df, lookback=20, range_pct=0.5)
+        # Strong uptrend should not be range-bound at 0.5%
+        self.assertFalse(result)
 
 
 class TestDhanTimestampConversion(unittest.TestCase):

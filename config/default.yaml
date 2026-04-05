@@ -1,91 +1,125 @@
 # ============================================================
-# Dhan Algo Trading System — Master Configuration
+# Dhan Algo Trading System — Master Configuration (v2.0)
+# Production-grade EMA strategy for options buying
 # ============================================================
 
-# --- Underlying Symbol (for signal generation) ---
+# --- Underlying Symbol ---
 symbol: NIFTY
-exchange: IDX_I                  # IDX_I for indices, NSE for equities, NFO for F&O
-instrument_type: INDEX          # INDEX, EQUITY, FUTCOM, OPTIDX
-security_id: "13"               # Dhan security ID for the UNDERLYING
-expiry: ""                      # For F&O: YYYY-MM-DD or leave empty for nearest
+exchange: IDX_I
+instrument_type: INDEX
+security_id: "13"
+expiry: ""
+timeframe: 5m
+lookback_candles: 200
 
-# --- Timeframe ---
-timeframe: 5m                   # 1m, 5m, 15m, 30m, 1h
-lookback_candles: 200           # Number of historical candles to fetch
-
-# --- EMA Configuration ---
+# --- EMA Configuration (quad-EMA stack) ---
 ema:
-  primary_period: 7             # Primary EMA (trigger)
-  short_period: 9               # Short EMA for crossover confirmation
-  long_period: 21               # Long EMA for crossover confirmation
+  primary_period: 7             # Fast trigger
+  short_period: 9               # Short confirmation
+  long_period: 21               # Trend direction
+  trend_period: 50              # Macro trend filter
   use_crossover_confirmation: true
+
+# --- Multi-Timeframe Analysis ---
+multi_timeframe:
+  enabled: true
+  higher_tf_minutes: 15         # 5m trades confirmed by 15m bias
+  require_htf_alignment: true   # Block trades against HTF trend
+  htf_ema_period: 21
 
 # --- Entry Rules ---
 entry:
   mode: both                    # breakout | pullback | both
-  confirm_candle_close: true    # Wait for candle close, not just wick
+  confirm_candle_close: true
   volume_confirmation: false
-  volume_multiplier: 1.5        # Current volume > multiplier * avg volume
+  volume_multiplier: 1.5
+  min_grade: "A"                # Minimum trade grade: A+, A, B, C
+  cooldown_bars: 3              # Wait N bars after a signal before next
+  max_entries_per_direction: 2
 
-# --- Sideways Market Filter ---
+# --- Sideways Market Filter (combined multi-method) ---
 sideways_filter:
   enabled: true
-  method: atr                   # atr | candle_range
+  method: combined              # atr | candle_range | combined
   atr_period: 14
-  atr_threshold: 0.1            # Minimum ATR as % of price (0.1 for 5m, 0.5 for daily)
-  candle_range_min: 0.05        # Minimum candle range as % of price
+  atr_threshold: 0.08           # ATR % of price (lower = more permissive)
+  candle_range_min: 0.05
+  ema_flat_lookback: 10         # Bars to check EMA slope
+  ema_flat_threshold: 0.005     # EMA slope < this = flat market
+  range_bound_lookback: 20      # Bars to check price range
+  range_bound_pct: 1.0          # Range < this % = consolidation
+  atr_expansion_lookback: 5
+  atr_expansion_factor: 1.1
 
 # --- Options (You are an option BUYER) ---
-# LONG signal → BUY CALL (CE)
-# SHORT signal → BUY PUT (PE)
-# Exit → SELL the option
 options:
   enabled: true
-  strike_selection: atm           # atm | itm_1 | itm_2 | otm_1 | otm_2 | fixed
-  strike_offset: 0                # Manual offset (in strike intervals) from ATM
-  fixed_strike: 0                 # Only used if strike_selection is 'fixed'
-  expiry_preference: weekly       # weekly | monthly | nearest
-  strike_interval: 50             # NIFTY=50, BANKNIFTY=100
-  premium_sl_pct: 15              # SL as % of premium (exit if premium drops 15%)
-  premium_target_pct: 25          # Target as % of premium (exit at 25% profit)
-  use_premium_based_sl: true      # true = SL/TP on premium; false = SL/TP from strategy signal
+  strike_selection: atm
+  strike_offset: 0
+  fixed_strike: 0
+  expiry_preference: weekly
+  strike_interval: 50           # NIFTY=50, BANKNIFTY=100
+  premium_sl_pct: 20            # SL: exit if premium drops 20%
+  premium_target_pct: 30        # TP: exit at 30% profit on premium
+  use_premium_based_sl: true
+  min_premium: 50               # Avoid illiquid penny options
+  max_premium: 500              # Avoid expensive deep ITM
+  avoid_last_hour_entry: true   # Theta decay protection
+  theta_decay_exit_minutes: 45  # Minutes before close to avoid entry
 
 # --- Exit Strategy ---
 exit:
   stop_loss:
-    type: fixed_points          # fixed_points | fixed_pct | swing | ema_breach
-    value: 30                   # Points for fixed_points, % for fixed_pct
+    type: fixed_points
+    value: 30
   target:
-    type: risk_reward           # risk_reward | fixed_points | fixed_pct
-    risk_reward_ratio: 1.5      # e.g., 1:1.5
-    value: 100                  # Points or % if not using risk_reward
+    type: risk_reward
+    risk_reward_ratio: 1.5
+    value: 100
   trailing_sl:
     enabled: true
-    activation_pct: 10          # Start trailing when premium profit > 10%
-    trail_pct: 5                # Trail 5% below peak premium
+    activation_pct: 12           # Start trailing after 12% premium profit
+    trail_pct: 5                 # Trail 5% below peak premium
+  partial_exit:
+    enabled: true
+    first_target_pct: 15         # Book partial at 15% profit
+    first_exit_fraction: 0.5     # Exit 50% of position
+    move_sl_to_cost: true        # Move SL to entry price after partial
   time_based_exit:
     enabled: true
-    exit_time: "15:15"          # Exit all positions by this time (IST)
+    exit_time: "15:15"
   exit_on_opposite_signal: true
 
 # --- Risk Management ---
 risk:
-  max_trades_per_day: 10
-  max_loss_per_day: 2000        # INR — kill switch (10% of capital)
-  capital_per_trade: 20000      # INR
-  lot_size: 65                  # NIFTY min lot = 65 (premium ~₹150-250 × 65 = ₹3,750-6,250)
+  max_trades_per_day: 10          # Reduced from 10 — quality over quantity
+  max_loss_per_day: 2000
+  capital_per_trade: 20000
+  lot_size: 65                   # NIFTY lot size
   max_open_positions: 1
-  risk_per_trade_pct: 2.0       # % of capital per trade
+  risk_per_trade_pct: 2.0
+  cooldown_after_loss: 2         # Wait N bars after a losing trade
+  max_consecutive_losses: 3      # Stop trading after 3 consecutive losses
+
+# --- Indian Brokerage Model ---
+brokerage:
+  enabled: true
+  brokerage_per_order: 20.0      # Flat ₹20 per order (Zerodha/Dhan)
+  stt_pct: 0.0625               # STT on sell side only for options
+  exchange_txn_pct: 0.0019       # NSE exchange charges
+  gst_pct: 18.0                  # GST on brokerage + exchange charges
+  sebi_per_crore: 10.0           # SEBI turnover fee
+  stamp_duty_pct: 0.003          # Stamp duty on buy side
 
 # --- Trading Hours (IST) ---
 trading_hours:
-  start: "09:20"                # Allow entry after 09:20
-  end: "14:30"                  # No new entries after 14:30 (avoid late-day traps)
-  force_exit: "15:25"           # Force close all by 15:25
+  start: "09:20"
+  end: "14:30"
+  force_exit: "15:25"
 
 # --- Logging ---
 logging:
-  level: INFO                   # DEBUG, INFO, WARNING, ERROR
+  level: INFO
   console: true
   file: true
   log_dir: logs
@@ -100,22 +134,24 @@ telegram:
 
 # --- Webhook / Postback ---
 webhook:
-  enabled: false                # Set true to start the postback listener
-  host: "0.0.0.0"              # Bind address
-  port: 8443                   # Port for the webhook server
-  auth_token: ""               # Optional: shared secret for X-Webhook-Token header
-  log_all_updates: true        # Log every postback payload
+  enabled: false
+  host: "0.0.0.0"
+  port: 8443
+  auth_token: ""
+  log_all_updates: true
 
 # --- Paper Trading ---
 paper_trading:
   initial_capital: 20000
-  slippage_pct: 0.05            # Simulated slippage
+  slippage_pct: 0.1              # 0.1% simulated slippage
 
 # --- Backtest ---
 backtest:
-  data_source: dhan              # dhan | csv
-  csv_path: ""                   # Path to CSV if data_source is csv
+  data_source: dhan
+  csv_path: ""
   start_date: "2025-01-01"
   end_date: "2025-12-31"
   initial_capital: 20000
-  commission_per_trade: 20       # INR per trade
+  commission_per_trade: 20       # Legacy fallback (brokerage model preferred)
+  next_candle_entry: true        # Signal on bar N → entry on bar N+1 open
+  slippage_pct: 0.1              # 0.1% adverse slippage on entry and exit

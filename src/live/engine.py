@@ -5,7 +5,7 @@ import time
 from datetime import datetime, timedelta
 
 from src.core.config import AppConfig
-from src.core.constants import ExitReason, OptionType, SignalType, TradingMode, TIMEFRAME_MAP
+from src.core.constants import ExitReason, OptionType, SignalType, TradeGrade, TradingMode, TIMEFRAME_MAP
 from src.core.logger import get_logger
 from src.data.dhan_client import DhanClient
 from src.data.market_data import MarketDataManager
@@ -263,11 +263,27 @@ class LiveEngine:
         if not signal.is_entry:
             return
 
+        # Trade grade filter
+        min_grade = TradeGrade(self.config.entry.min_grade)
+        if not signal.passes_grade_filter(min_grade):
+            logger.info("[%s] Signal rejected: grade %s < min %s",
+                        now_str, signal.grade.value, min_grade.value)
+            return
+
+        # Theta decay protection for options
+        avoid, avoid_reason = self.contract_selector.should_avoid_entry(now)
+        if avoid:
+            logger.info("[%s] Entry blocked: %s", now_str, avoid_reason)
+            return
+
         if self.config.entry.confirm_candle_close and not self.market_data.is_candle_closed():
             logger.debug("[%s] Waiting for candle close confirmation", now_str)
             return
 
         self._last_signal_bar = current_bar
+        logger.info("[%s] %s signal: grade=%s conf=%.0f%% | %s",
+                    now_str, signal.type.value, signal.grade.value,
+                    signal.confidence * 100, signal.score_breakdown)
         self._enter_option(signal, underlying_price)
 
     # ------------------------------------------------------------------

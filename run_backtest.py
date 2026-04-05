@@ -90,7 +90,6 @@ def main() -> None:
         trades=trades,
         equity_curve=engine.equity_curve,
         initial_capital=config.backtest.initial_capital,
-        commission=config.backtest.commission_per_trade,
     )
 
     report.print_summary()

@@ -6,10 +6,14 @@ from typing import Optional
 import pandas as pd
 
 from src.core.config import AppConfig
-from src.core.constants import ExitReason, OptionType, OrderSide, PositionStatus, SignalType
+from src.core.constants import (
+    ExitReason, OptionType, OrderSide, PositionStatus, SignalType, TradeGrade,
+)
 from src.core.logger import get_logger
 from src.options.contract_selector import ContractSelector, estimate_option_premium
 from src.strategy.base import BaseStrategy
+from src.strategy.signals import Signal
+from src.utils.brokerage import compute_round_trip_costs
 
 logger = get_logger("backtest_engine")
 
@@ -29,6 +33,8 @@ class BacktestTrade:
         strike: float,
         underlying_entry: float,
         reason: str = "",
+        grade: TradeGrade = TradeGrade.C,
+        confidence: float = 0.0,
     ):
         self.trade_id = trade_id
         self.side = OrderSide.BUY
@@ -46,13 +52,37 @@ class BacktestTrade:
         self.exit_time: Optional[datetime] = None
         self.exit_reason: Optional[ExitReason] = None
         self.pnl: float = 0.0
+        self.costs: float = 0.0
+        self.net_pnl: float = 0.0
         self.reason = reason
+        self.grade = grade
+        self.confidence = confidence
+        self.partial_exits: list[dict] = []
+        self._original_quantity: int = quantity
 
-    def close(self, exit_premium: float, exit_time: datetime, reason: ExitReason) -> None:
+    def close(self, exit_premium: float, exit_time: datetime, reason: ExitReason,
+              costs: float = 0.0) -> None:
         self.exit_price = exit_premium
         self.exit_time = exit_time
         self.exit_reason = reason
         self.pnl = (exit_premium - self.entry_price) * self.quantity
+        partial_pnl = sum(p.get("pnl", 0) for p in self.partial_exits)
+        self.pnl += partial_pnl
+        self.costs = costs
+        self.net_pnl = self.pnl - costs
+
+    def partial_close(self, exit_premium: float, fraction: float) -> float:
+        """Close a fraction of the position. Returns the partial PnL."""
+        exit_qty = max(1, int(self.quantity * fraction))
+        exit_qty = min(exit_qty, self.quantity)
+        partial_pnl = (exit_premium - self.entry_price) * exit_qty
+        self.partial_exits.append({
+            "premium": exit_premium,
+            "quantity": exit_qty,
+            "pnl": partial_pnl,
+        })
+        self.quantity -= exit_qty
+        return partial_pnl
 
     @property
     def display_name(self) -> str:
@@ -69,13 +99,17 @@ class BacktestTrade:
             "entry_time": self.entry_time,
             "exit_price": self.exit_price,
             "exit_time": self.exit_time,
-            "quantity": self.quantity,
+            "quantity": self._original_quantity,
             "stop_loss": self.stop_loss,
             "target": self.target,
             "underlying_entry": self.underlying_entry,
             "exit_reason": self.exit_reason.value if self.exit_reason else "",
             "pnl": round(self.pnl, 2),
+            "costs": round(self.costs, 2),
+            "net_pnl": round(self.net_pnl, 2),
             "reason": self.reason,
+            "grade": self.grade.value,
+            "confidence": round(self.confidence, 2),
         }
 
 
@@ -83,8 +117,13 @@ class BacktestEngine:
     """
     Event-driven backtesting engine for option buying strategy.
 
-    Processes underlying candles to generate signals, then simulates
-    option premium P&L using a simplified pricing model.
+    Key improvements over baseline:
+    - Next-candle execution: signal on bar N → entry on bar N+1 open
+    - Realistic Indian brokerage (STT, GST, stamp duty, exchange charges)
+    - Configurable slippage on entry and exit
+    - Trade grading filter (only take A+ / A setups)
+    - Partial profit booking
+    - Cooldown after consecutive losses
     """
 
     def __init__(self, config: AppConfig, strategy: BaseStrategy):
@@ -92,10 +131,11 @@ class BacktestEngine:
         self.strategy = strategy
         self.contract_selector = ContractSelector(config)
         self.initial_capital = config.backtest.initial_capital
-        self.commission = config.backtest.commission_per_trade
         self.lot_size = config.risk.lot_size
         self.max_trades_per_day = config.risk.max_trades_per_day
         self.max_loss_per_day = config.risk.max_loss_per_day
+        self.next_candle_entry = config.backtest.next_candle_entry
+        self.slippage_pct = config.backtest.slippage_pct
 
         self.trades: list[BacktestTrade] = []
         self.active_trade: Optional[BacktestTrade] = None
@@ -104,6 +144,9 @@ class BacktestEngine:
         self._daily_trade_count = 0
         self._daily_pnl = 0.0
         self._current_date: Optional[str] = None
+        self._pending_signal: Optional[Signal] = None
+        self._consecutive_losses = 0
+        self._partial_booked = False
 
     def run(self, df: pd.DataFrame) -> list[BacktestTrade]:
         if df.empty:
@@ -115,13 +158,17 @@ class BacktestEngine:
             self.config.ema.primary_period,
             self.config.ema.short_period,
             self.config.ema.long_period,
+            self.config.ema.trend_period,
             self.config.sideways_filter.atr_period,
         ) + 5
 
         capital = self.initial_capital
         logger.info(
-            "Starting backtest: %d candles, capital=%.0f, strategy=%s (OPTION BUYING)",
+            "Starting backtest: %d candles, capital=%.0f, strategy=%s "
+            "(next_candle=%s, slippage=%.1f%%, brokerage=%s)",
             len(df), capital, self.strategy.name(),
+            self.next_candle_entry, self.slippage_pct,
+            "ON" if self.config.brokerage.enabled else "OFF",
         )
 
         for i in range(min_bars, len(df)):
@@ -134,57 +181,101 @@ class BacktestEngine:
                 self._reset_daily(bar_date)
 
             underlying = float(bar["close"])
+            underlying_open = float(bar["open"])
             underlying_high = float(bar["high"])
             underlying_low = float(bar["low"])
 
+            # ── Execute pending signal from previous bar (next-candle entry) ──
+            if self._pending_signal and not self.active_trade:
+                if self._can_trade():
+                    entry_underlying = underlying_open if self.next_candle_entry else underlying
+                    self._open_trade(self._pending_signal, entry_underlying, bar_time)
+                self._pending_signal = None
+
+            # ── Generate signal on current bar ──
             signal = self.strategy.generate_signal(window)
 
+            # ── Manage active trade ──
             if self.active_trade:
                 current_premium = self._estimate_premium(
                     underlying, self.active_trade.strike, self.active_trade.option_type,
                 )
 
-                # Check for opposite signal exit FIRST (fast reaction)
+                # Opposite signal exit
                 if self.config.exit.exit_on_opposite_signal and signal.is_entry:
                     if self._is_opposite_signal(signal):
-                        self._close_active(current_premium, bar_time, ExitReason.OPPOSITE_SIGNAL)
-                        capital += self.trades[-1].pnl - self.commission
-                        # Immediately re-enter on the new signal
-                        if self._can_trade():
+                        costs = self._compute_costs(
+                            self.active_trade.entry_price, current_premium,
+                        )
+                        self._close_active(current_premium, bar_time,
+                                           ExitReason.OPPOSITE_SIGNAL, costs)
+                        capital += self.trades[-1].net_pnl
+
+                        # Queue the new signal for next-candle entry
+                        if self.next_candle_entry:
+                            self._pending_signal = signal
+                        elif self._can_trade():
                             self._open_trade(signal, underlying, bar_time)
-                            capital -= self.commission
                         self._record_equity(bar_time, capital, underlying)
                         continue
 
+                # Partial profit booking
+                if (self.config.exit.partial_exit.enabled and not self._partial_booked
+                        and self.active_trade.quantity > 1):
+                    pe_cfg = self.config.exit.partial_exit
+                    profit_pct = ((current_premium - self.active_trade.entry_price)
+                                  / self.active_trade.entry_price * 100)
+                    if profit_pct >= pe_cfg.first_target_pct:
+                        partial_pnl = self.active_trade.partial_close(
+                            current_premium, pe_cfg.first_exit_fraction,
+                        )
+                        capital += partial_pnl
+                        self._partial_booked = True
+                        if pe_cfg.move_sl_to_cost:
+                            self.active_trade.stop_loss = self.active_trade.entry_price
+                            self.active_trade.trailing_sl = max(
+                                self.active_trade.trailing_sl, self.active_trade.entry_price,
+                            )
+                        logger.debug("Partial exit: +%.2f at %.2f", partial_pnl, current_premium)
+
+                # SL / TP / time exit
                 exit_reason = self._check_exit(current_premium, bar_time)
                 if exit_reason:
                     exit_premium = self._get_exit_premium(
                         exit_reason, current_premium, underlying_high, underlying_low, underlying,
                     )
-                    self._close_active(exit_premium, bar_time, exit_reason)
-                    capital += self.trades[-1].pnl - self.commission
+                    costs = self._compute_costs(self.active_trade.entry_price, exit_premium)
+                    self._close_active(exit_premium, bar_time, exit_reason, costs)
+                    capital += self.trades[-1].net_pnl
 
+                # Trailing SL update
                 if self.active_trade and self.config.exit.trailing_sl.enabled:
                     self._update_trailing(current_premium)
 
             elif signal.is_entry and self._can_trade():
-                self._open_trade(signal, underlying, bar_time)
-                capital -= self.commission
+                # Only take signals that pass the grade filter
+                min_grade = TradeGrade(self.config.entry.min_grade)
+                if signal.passes_grade_filter(min_grade):
+                    if self.next_candle_entry:
+                        self._pending_signal = signal
+                    else:
+                        self._open_trade(signal, underlying, bar_time)
 
             self._record_equity(bar_time, capital, underlying)
 
+        # Close any open trade at the end
         if self.active_trade:
             last_underlying = float(df["close"].iloc[-1])
             last_premium = self._estimate_premium(
                 last_underlying, self.active_trade.strike, self.active_trade.option_type,
             )
-            self._close_active(last_premium, df.index[-1], ExitReason.FORCE_EXIT)
+            costs = self._compute_costs(self.active_trade.entry_price, last_premium)
+            self._close_active(last_premium, df.index[-1], ExitReason.FORCE_EXIT, costs)
 
         logger.info("Backtest complete: %d trades", len(self.trades))
         return self.trades
 
     def _is_opposite_signal(self, signal) -> bool:
-        """Check if new signal is opposite to active trade's direction."""
         if not self.active_trade:
             return False
         if self.active_trade.option_type == OptionType.CALL and signal.type == SignalType.SHORT:
@@ -200,7 +291,8 @@ class BacktestEngine:
         contract = self.contract_selector.select_contract(signal.type, underlying)
         entry_premium = self._estimate_premium(underlying, contract.strike, opt_type)
 
-        slippage = entry_premium * (self.config.paper_trading.slippage_pct / 100)
+        # Apply slippage (always adverse)
+        slippage = entry_premium * (self.slippage_pct / 100)
         entry_premium += slippage
 
         if self.config.options.use_premium_based_sl:
@@ -221,18 +313,33 @@ class BacktestEngine:
             strike=contract.strike,
             underlying_entry=underlying,
             reason=signal.reason,
+            grade=signal.grade,
+            confidence=signal.confidence,
         )
         trade.trailing_sl = sl
         trade.peak_price = entry_premium
         self.active_trade = trade
         self._daily_trade_count += 1
+        self._partial_booked = False
 
-    def _close_active(self, exit_premium: float, bar_time, reason: ExitReason) -> None:
+    def _close_active(self, exit_premium: float, bar_time, reason: ExitReason,
+                      costs: float = 0.0) -> None:
         if not self.active_trade:
             return
-        self.active_trade.close(exit_premium, bar_time, reason)
-        self._daily_pnl += self.active_trade.pnl
+
+        # Apply slippage on exit (adverse = lower price)
+        slippage = exit_premium * (self.slippage_pct / 100)
+        exit_premium = max(0.05, exit_premium - slippage)
+
+        self.active_trade.close(exit_premium, bar_time, reason, costs)
+        self._daily_pnl += self.active_trade.net_pnl
         self.trades.append(self.active_trade)
+
+        if self.active_trade.pnl <= 0:
+            self._consecutive_losses += 1
+        else:
+            self._consecutive_losses = 0
+
         self.active_trade = None
 
     def _check_exit(self, current_premium: float, bar_time) -> ExitReason | None:
@@ -240,11 +347,12 @@ class BacktestEngine:
         if not trade:
             return None
 
-        # SL/TP checked BEFORE time exit so we capture the precise level
         eff_sl = max(trade.stop_loss, trade.trailing_sl)
 
         if current_premium <= eff_sl:
-            return ExitReason.TRAILING_SL if trade.trailing_sl > trade.stop_loss else ExitReason.STOP_LOSS
+            return (ExitReason.TRAILING_SL
+                    if trade.trailing_sl > trade.stop_loss
+                    else ExitReason.STOP_LOSS)
         if current_premium >= trade.target:
             return ExitReason.TARGET
 
@@ -287,10 +395,17 @@ class BacktestEngine:
     def _estimate_premium(self, underlying: float, strike: float, opt_type: OptionType) -> float:
         return estimate_option_premium(underlying, strike, opt_type)
 
+    def _compute_costs(self, entry_premium: float, exit_premium: float) -> float:
+        return compute_round_trip_costs(
+            entry_premium, exit_premium, self.lot_size, self.config.brokerage,
+        )
+
     def _can_trade(self) -> bool:
         if self._daily_trade_count >= self.max_trades_per_day:
             return False
         if self._daily_pnl <= -self.max_loss_per_day:
+            return False
+        if self._consecutive_losses >= self.config.risk.max_consecutive_losses:
             return False
         return True
 
@@ -298,6 +413,7 @@ class BacktestEngine:
         self._current_date = date_str
         self._daily_trade_count = 0
         self._daily_pnl = 0.0
+        self._consecutive_losses = 0
 
     def _record_equity(self, bar_time, capital: float, underlying: float) -> None:
         unrealized = 0.0

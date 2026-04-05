@@ -16,24 +16,42 @@ class EMAConfig:
     primary_period: int = 7
     short_period: int = 9
     long_period: int = 21
+    trend_period: int = 50
     use_crossover_confirmation: bool = True
 
 
 @dataclass
+class MultiTimeframeConfig:
+    enabled: bool = True
+    higher_tf_minutes: int = 15
+    require_htf_alignment: bool = True
+    htf_ema_period: int = 21
+
+
+@dataclass
 class EntryConfig:
-    mode: str = "breakout"
+    mode: str = "both"
     confirm_candle_close: bool = True
     volume_confirmation: bool = False
     volume_multiplier: float = 1.5
+    min_grade: str = "A"
+    cooldown_bars: int = 3
+    max_entries_per_direction: int = 2
 
 
 @dataclass
 class SidewaysFilterConfig:
     enabled: bool = True
-    method: str = "atr"
+    method: str = "combined"
     atr_period: int = 14
-    atr_threshold: float = 0.5
-    candle_range_min: float = 0.3
+    atr_threshold: float = 0.1
+    candle_range_min: float = 0.05
+    ema_flat_lookback: int = 10
+    ema_flat_threshold: float = 0.005
+    range_bound_lookback: int = 20
+    range_bound_pct: float = 1.0
+    atr_expansion_lookback: int = 5
+    atr_expansion_factor: float = 1.1
 
 
 @dataclass
@@ -52,8 +70,16 @@ class TargetConfig:
 @dataclass
 class TrailingSLConfig:
     enabled: bool = True
-    activation_pct: float = 1.0
-    trail_pct: float = 0.5
+    activation_pct: float = 10.0
+    trail_pct: float = 5.0
+
+
+@dataclass
+class PartialExitConfig:
+    enabled: bool = False
+    first_target_pct: float = 15.0
+    first_exit_fraction: float = 0.5
+    move_sl_to_cost: bool = True
 
 
 @dataclass
@@ -67,6 +93,7 @@ class ExitConfig:
     stop_loss: StopLossConfig = field(default_factory=StopLossConfig)
     target: TargetConfig = field(default_factory=TargetConfig)
     trailing_sl: TrailingSLConfig = field(default_factory=TrailingSLConfig)
+    partial_exit: PartialExitConfig = field(default_factory=PartialExitConfig)
     time_based_exit: TimeExitConfig = field(default_factory=TimeExitConfig)
     exit_on_opposite_signal: bool = True
 
@@ -74,17 +101,31 @@ class ExitConfig:
 @dataclass
 class RiskConfig:
     max_trades_per_day: int = 5
-    max_loss_per_day: float = 1000.0
+    max_loss_per_day: float = 2000.0
     capital_per_trade: float = 20000.0
     lot_size: int = 65
     max_open_positions: int = 1
-    risk_per_trade_pct: float = 1.0
+    risk_per_trade_pct: float = 2.0
+    cooldown_after_loss: int = 2
+    max_consecutive_losses: int = 3
+
+
+@dataclass
+class BrokerageConfig:
+    """Indian brokerage model for realistic backtesting."""
+    enabled: bool = True
+    brokerage_per_order: float = 20.0
+    stt_pct: float = 0.0625
+    exchange_txn_pct: float = 0.0019
+    gst_pct: float = 18.0
+    sebi_per_crore: float = 10.0
+    stamp_duty_pct: float = 0.003
 
 
 @dataclass
 class TradingHoursConfig:
     start: str = "09:20"
-    end: str = "15:15"
+    end: str = "14:30"
     force_exit: str = "15:25"
 
 
@@ -108,7 +149,7 @@ class TelegramConfig:
 @dataclass
 class PaperTradingConfig:
     initial_capital: float = 20000.0
-    slippage_pct: float = 0.05
+    slippage_pct: float = 0.1
 
 
 @dataclass
@@ -119,9 +160,13 @@ class OptionsConfig:
     fixed_strike: float = 0.0
     expiry_preference: str = "weekly"
     strike_interval: float = 50.0
-    premium_sl_pct: float = 30.0
-    premium_target_pct: float = 60.0
+    premium_sl_pct: float = 20.0
+    premium_target_pct: float = 30.0
     use_premium_based_sl: bool = True
+    min_premium: float = 50.0
+    max_premium: float = 500.0
+    avoid_last_hour_entry: bool = True
+    theta_decay_exit_minutes: int = 45
 
 
 @dataclass
@@ -141,6 +186,8 @@ class BacktestConfig:
     end_date: str = "2025-12-31"
     initial_capital: float = 20000.0
     commission_per_trade: float = 20.0
+    next_candle_entry: bool = True
+    slippage_pct: float = 0.1
 
 
 @dataclass
@@ -154,10 +201,12 @@ class AppConfig:
     lookback_candles: int = 200
 
     ema: EMAConfig = field(default_factory=EMAConfig)
+    multi_timeframe: MultiTimeframeConfig = field(default_factory=MultiTimeframeConfig)
     entry: EntryConfig = field(default_factory=EntryConfig)
     sideways_filter: SidewaysFilterConfig = field(default_factory=SidewaysFilterConfig)
     exit: ExitConfig = field(default_factory=ExitConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
+    brokerage: BrokerageConfig = field(default_factory=BrokerageConfig)
     trading_hours: TradingHoursConfig = field(default_factory=TradingHoursConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
@@ -166,7 +215,6 @@ class AppConfig:
     paper_trading: PaperTradingConfig = field(default_factory=PaperTradingConfig)
     backtest: BacktestConfig = field(default_factory=BacktestConfig)
 
-    # Credentials from env
     dhan_client_id: str = ""
     dhan_access_token: str = ""
     telegram_bot_token: str = ""
@@ -197,6 +245,8 @@ class AppConfig:
 
         if "ema" in raw:
             cfg.ema = _from_dict(EMAConfig, raw["ema"])
+        if "multi_timeframe" in raw:
+            cfg.multi_timeframe = _from_dict(MultiTimeframeConfig, raw["multi_timeframe"])
         if "entry" in raw:
             cfg.entry = _from_dict(EntryConfig, raw["entry"])
         if "sideways_filter" in raw:
@@ -207,11 +257,14 @@ class AppConfig:
                 stop_loss=_from_dict(StopLossConfig, ex.get("stop_loss", {})),
                 target=_from_dict(TargetConfig, ex.get("target", {})),
                 trailing_sl=_from_dict(TrailingSLConfig, ex.get("trailing_sl", {})),
+                partial_exit=_from_dict(PartialExitConfig, ex.get("partial_exit", {})),
                 time_based_exit=_from_dict(TimeExitConfig, ex.get("time_based_exit", {})),
                 exit_on_opposite_signal=ex.get("exit_on_opposite_signal", True),
             )
         if "risk" in raw:
             cfg.risk = _from_dict(RiskConfig, raw["risk"])
+        if "brokerage" in raw:
+            cfg.brokerage = _from_dict(BrokerageConfig, raw["brokerage"])
         if "trading_hours" in raw:
             cfg.trading_hours = _from_dict(TradingHoursConfig, raw["trading_hours"])
         if "logging" in raw:

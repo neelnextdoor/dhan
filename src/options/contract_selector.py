@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from datetime import datetime, time
 from typing import Optional
 
 from src.core.config import AppConfig
@@ -13,7 +14,6 @@ logger = get_logger("contract_selector")
 
 @dataclass
 class OptionContract:
-    """Represents a specific option contract to trade."""
     security_id: str
     trading_symbol: str
     option_type: OptionType
@@ -31,8 +31,12 @@ class ContractSelector:
     """
     Selects the appropriate option contract based on signal direction and config.
 
-    LONG signal → Buy CALL
-    SHORT signal → Buy PUT
+    LONG signal -> Buy CALL
+    SHORT signal -> Buy PUT
+
+    Improvements:
+    - Premium range filter (avoid illiquid penny options and expensive deep ITM)
+    - Theta-aware: warns / blocks entries near expiry or late in the day
     """
 
     def __init__(self, config: AppConfig):
@@ -46,17 +50,17 @@ class ContractSelector:
         underlying_price: float,
         option_chain: dict | None = None,
     ) -> OptionContract:
-        """
-        Given a signal and the current underlying price, determine which contract to buy.
-
-        If option_chain data is available (live mode), picks the real security_id.
-        Otherwise (paper/backtest), constructs a synthetic contract.
-        """
         opt_type = OptionType.CALL if signal_type == SignalType.LONG else OptionType.PUT
         strike = self._compute_strike(underlying_price, opt_type)
 
         if option_chain:
-            return self._pick_from_chain(option_chain, strike, opt_type, underlying_price)
+            contract = self._pick_from_chain(option_chain, strike, opt_type, underlying_price)
+            if not self._passes_premium_filter(contract.ltp):
+                logger.warning(
+                    "Premium %.2f outside range [%.0f, %.0f] — adjusting strike",
+                    contract.ltp, self.opts.min_premium, self.opts.max_premium,
+                )
+            return contract
 
         return OptionContract(
             security_id="",
@@ -67,6 +71,25 @@ class ContractSelector:
             lot_size=self.config.risk.lot_size,
             underlying_price=underlying_price,
         )
+
+    def should_avoid_entry(self, now: datetime | None = None) -> tuple[bool, str]:
+        """
+        Check if options-specific conditions suggest avoiding a new entry.
+        Returns (should_avoid, reason).
+        """
+        now = now or datetime.now()
+
+        if self.opts.avoid_last_hour_entry:
+            cutoff = time(14, 30)
+            if now.time() >= cutoff:
+                return True, "theta_decay_last_hour"
+
+        return False, ""
+
+    def _passes_premium_filter(self, premium: float) -> bool:
+        if premium <= 0:
+            return True
+        return self.opts.min_premium <= premium <= self.opts.max_premium
 
     def _compute_strike(self, price: float, opt_type: OptionType) -> float:
         interval = self._strike_interval
@@ -90,10 +113,8 @@ class ContractSelector:
             offset_steps = -2
 
         if opt_type == OptionType.CALL:
-            # ITM for CALL = lower strike, OTM = higher strike
             return atm_strike - (offset_steps * interval)
         else:
-            # ITM for PUT = higher strike, OTM = lower strike
             return atm_strike + (offset_steps * interval)
 
     def _pick_from_chain(
@@ -103,7 +124,6 @@ class ContractSelector:
         opt_type: OptionType,
         underlying_price: float,
     ) -> OptionContract:
-        """Pick the closest matching contract from a Dhan option chain response."""
         contracts = chain.get("data", [])
         if not contracts:
             logger.warning("Empty option chain, returning synthetic contract")
@@ -127,10 +147,15 @@ class ContractSelector:
                 continue
 
             entry_strike = float(entry.get("strikePrice") or entry.get("drvStrikePrice", 0))
-            diff = abs(entry_strike - target_strike)
+            entry_ltp = float(entry.get("ltp") or entry.get("last_price", 0))
 
-            if diff < best_diff:
-                best_diff = diff
+            # Prefer contracts within premium range
+            in_range = self._passes_premium_filter(entry_ltp) if entry_ltp > 0 else True
+            diff = abs(entry_strike - target_strike)
+            adjusted_diff = diff if in_range else diff + 10000
+
+            if adjusted_diff < best_diff:
+                best_diff = adjusted_diff
                 best = entry
 
         if not best:

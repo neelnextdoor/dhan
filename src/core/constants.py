@@ -34,6 +34,7 @@ class ExitReason(str, Enum):
     STOP_LOSS = "STOP_LOSS"
     TARGET = "TARGET"
     TRAILING_SL = "TRAILING_SL"
+    PARTIAL_PROFIT = "PARTIAL_PROFIT"
     OPPOSITE_SIGNAL = "OPPOSITE_SIGNAL"
     TIME_EXIT = "TIME_EXIT"
     FORCE_EXIT = "FORCE_EXIT"
@@ -72,6 +73,14 @@ class EntryMode(str, Enum):
     BREAKOUT = "breakout"
     PULLBACK = "pullback"
     BOTH = "both"
+
+
+class TradeGrade(str, Enum):
+    """Trade quality grading — only A_PLUS and A are taken by default."""
+    A_PLUS = "A+"
+    A = "A"
+    B = "B"
+    C = "C"
 
 
 TIMEFRAME_MAP = {
