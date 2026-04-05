@@ -8,6 +8,13 @@ python run_live.py --mode paper        # Paper trading
 
 
 
+for frontend 
+python run_api.py --reload // api server
+npm run dev // for UI
+
+
+
+
 
 
 
