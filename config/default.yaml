@@ -28,8 +28,8 @@ oi:
 ema:
   primary_period: 7
   short_period: 7
-  long_period: 26
-  trend_period: 50
+  long_period: 21
+  trend_period: 200
   use_crossover_confirmation: true
 multi_timeframe:
   enabled: true

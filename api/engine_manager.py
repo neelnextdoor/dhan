@@ -224,7 +224,7 @@ class EngineManager:
         self.state.daily_pnl = pm.daily_pnl
 
         if engine.market_data:
-            candles = engine.market_data.candles
+            candles = getattr(engine.market_data, 'candles', None) or getattr(engine.market_data, 'entry_candles', None)
             if candles is not None and not candles.empty:
                 recent = candles.tail(200)
                 self.state.candle_data = [
