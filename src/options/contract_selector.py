@@ -195,17 +195,34 @@ def estimate_option_premium(
     strike: float,
     opt_type: OptionType,
     volatility_pct: float = 15.0,
+    days_to_expiry: float = 5.0,
 ) -> float:
     """
-    Rough premium estimate for backtesting when real option data isn't available.
-    Uses intrinsic value + a simplified time value proxy.
+    Black-Scholes based premium estimate for paper trading / backtesting.
+    Provides realistic delta sensitivity so SL/TP triggers work correctly.
     """
+    S = underlying_price
+    K = strike
+    T = days_to_expiry / 365.0
+    sigma = volatility_pct / 100.0
+    r = 0.07
+
+    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
+        if opt_type == OptionType.CALL:
+            return max(S - K, 0.5)
+        return max(K - S, 0.5)
+
+    d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+    d2 = d1 - sigma * math.sqrt(T)
+
     if opt_type == OptionType.CALL:
-        intrinsic = max(underlying_price - strike, 0)
+        premium = S * _norm_cdf(d1) - K * math.exp(-r * T) * _norm_cdf(d2)
     else:
-        intrinsic = max(strike - underlying_price, 0)
+        premium = K * math.exp(-r * T) * _norm_cdf(-d2) - S * _norm_cdf(-d1)
 
-    otm_distance = abs(underlying_price - strike) / underlying_price
-    time_value = underlying_price * (volatility_pct / 100) * 0.05 * math.exp(-otm_distance * 10)
+    return max(premium, 0.5)
 
-    return max(intrinsic + time_value, time_value * 0.5)
+
+def _norm_cdf(x: float) -> float:
+    """Standard normal cumulative distribution via math.erf."""
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))

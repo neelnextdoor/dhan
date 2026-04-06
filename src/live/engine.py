@@ -54,6 +54,8 @@ class LiveEngine:
         self._active_contract: OptionContract | None = None
         self._tick_count = 0
         self._last_candle_count = 0
+        self._pending_signal = None
+        self._pending_signal_bar = None
 
     def start(self) -> None:
         logger.info("=" * 60)
@@ -178,7 +180,7 @@ class LiveEngine:
     def _run_loop(self) -> None:
         tf_minutes = TIMEFRAME_MAP.get(self.config.timeframe, 5)
         tf_seconds = tf_minutes * 60
-        poll_interval = min(tf_seconds // 3, 30)
+        poll_interval = 10
 
         logger.info("Entering main loop (poll every %ds, candle=%dm)", poll_interval, tf_minutes)
         logger.info("Press Ctrl+C to stop")
@@ -242,15 +244,29 @@ class LiveEngine:
                 ot = "CE" if trade.option_type == OptionType.CALL else "PE"
                 position_str = f"{trade.strike:.0f}{ot} entry={trade.entry_price:.1f} now={prem:.1f} pnl={unrealized:+.0f}"
 
-        if new_candles > 0 or self._tick_count % 5 == 0:
-            logger.info("[%s] %s @ %.1f | %s | trades=%d",
-                        now_str, self.config.symbol, underlying_price,
-                        position_str,
-                        self.position_manager.daily_trade_count)
+        logger.info("[%s] %s @ %.1f | %s | trades=%d",
+                    now_str, self.config.symbol, underlying_price,
+                    position_str,
+                    self.position_manager.daily_trade_count)
 
         # Manage open position
         if self.position_manager.has_open_position:
             self._manage_open_position(underlying_price, now, candles)
+            return
+
+        # Execute pending signal when a new candle confirms the previous one closed
+        if self._pending_signal and new_candles > 0 and current_bar != self._pending_signal_bar:
+            logger.info("[%s] Candle closed — executing pending signal: %s",
+                        now_str, self._pending_signal.reason)
+            pending = self._pending_signal
+            self._pending_signal = None
+            self._pending_signal_bar = None
+            self._last_signal_bar = current_bar
+            self._enter_option(pending, underlying_price)
+            return
+
+        # If we have a pending signal waiting for candle close, don't evaluate new signals
+        if self._pending_signal:
             return
 
         # Check for new entry
@@ -267,8 +283,11 @@ class LiveEngine:
         if not signal.is_entry:
             return
 
-        if self.config.entry.confirm_candle_close and not self.market_data.is_candle_closed():
-            logger.debug("[%s] Waiting for candle close confirmation", now_str)
+        if self.config.entry.confirm_candle_close:
+            self._pending_signal = signal
+            self._pending_signal_bar = current_bar
+            logger.info("[%s] Signal found, waiting for candle close: %s @ %.1f | SL=%.1f TP=%.1f",
+                        now_str, signal.reason, underlying_price, signal.stop_loss, signal.target)
             return
 
         self._last_signal_bar = current_bar
@@ -360,6 +379,14 @@ class LiveEngine:
             return
 
         current_premium = self._get_current_premium(trade, underlying_price)
+        unrealized = (current_premium - trade.entry_price) * trade.quantity
+        effective_sl = max(trade.stop_loss, trade.trailing_sl) if trade.trailing_sl else trade.stop_loss
+        ot = "CE" if trade.option_type == OptionType.CALL else "PE"
+        logger.info(
+            "[%s] POSITION: %s %.0f%s | premium=%.2f (entry=%.2f) | SL=%.2f TP=%.2f | PnL=%+.0f",
+            now.strftime("%H:%M:%S"), trade.symbol, trade.strike, ot,
+            current_premium, trade.entry_price, effective_sl, trade.target, unrealized,
+        )
 
         if self.config.exit.trailing_sl.enabled:
             self.position_manager.update_trailing_sl(
