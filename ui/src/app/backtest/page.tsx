@@ -429,23 +429,79 @@ export default function BacktestPage() {
             )}
 
             {activeView === 'summary' && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <MetricCard label="Total Trades" value={s.total_trades} />
-                <MetricCard label="Win Rate" value={`${s.win_rate}%`} color={s.win_rate >= 50 ? 'text-profit' : 'text-loss'} />
-                <MetricCard label="Net P&L" value={`₹${s.net_pnl?.toLocaleString()}`} color={s.net_pnl >= 0 ? 'text-profit' : 'text-loss'} />
-                <MetricCard label="Return" value={`${s.return_pct}%`} color={s.return_pct >= 0 ? 'text-profit' : 'text-loss'} />
-                <MetricCard label="Profit Factor" value={s.profit_factor?.toFixed(2)} color={s.profit_factor >= 1 ? 'text-profit' : 'text-loss'} />
-                <MetricCard label="Sharpe Ratio" value={s.sharpe_ratio?.toFixed(2)} />
-                <MetricCard label="Max Drawdown" value={`₹${s.max_drawdown?.toLocaleString()}`} color="text-loss" />
-                <MetricCard label="Max DD %" value={`${s.max_drawdown_pct}%`} color="text-loss" />
-                <MetricCard label="Avg Win" value={`₹${s.avg_win?.toLocaleString()}`} color="text-profit" />
-                <MetricCard label="Avg Loss" value={`₹${Math.abs(s.avg_loss)?.toLocaleString()}`} color="text-loss" />
-                <MetricCard label="Largest Win" value={`₹${s.largest_win?.toLocaleString()}`} color="text-profit" />
-                <MetricCard label="Largest Loss" value={`₹${Math.abs(s.largest_loss)?.toLocaleString()}`} color="text-loss" />
-                <MetricCard label="CE Trades" value={`${s.ce_trades} (₹${s.ce_pnl?.toLocaleString()})`} />
-                <MetricCard label="PE Trades" value={`${s.pe_trades} (₹${s.pe_pnl?.toLocaleString()})`} />
-                <MetricCard label="Initial Capital" value={`₹${s.initial_capital?.toLocaleString()}`} />
-                <MetricCard label="Final Capital" value={`₹${s.final_capital?.toLocaleString()}`} color={s.final_capital >= s.initial_capital ? 'text-profit' : 'text-loss'} />
+              <div className="space-y-4">
+                {/* Key metrics row */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <MetricCard label="Total Trades" value={s.total_trades} />
+                  <MetricCard label="Win Rate" value={`${s.win_rate}%`} color={s.win_rate >= 50 ? 'text-profit' : 'text-loss'} />
+                  <MetricCard label="Net P&L" value={`₹${s.net_pnl?.toLocaleString()}`} color={s.net_pnl >= 0 ? 'text-profit' : 'text-loss'} />
+                  <MetricCard label="Return" value={`${s.return_pct}%`} color={s.return_pct >= 0 ? 'text-profit' : 'text-loss'} />
+                </div>
+
+                {/* P&L breakdown */}
+                <div className="card overflow-hidden">
+                  <div className="card-header">
+                    <h3 className="text-sm font-semibold text-white">P&L Breakdown</h3>
+                  </div>
+                  <div className="card-body">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div>
+                        <div className="stat-label">Gross P&L</div>
+                        <div className={clsx('text-lg font-bold font-mono', (s.total_pnl ?? 0) >= 0 ? 'text-profit' : 'text-loss')}>
+                          ₹{s.total_pnl?.toLocaleString()}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="stat-label">Commission</div>
+                        <div className="text-lg font-bold font-mono text-amber-400">
+                          -₹{s.total_commission?.toLocaleString() ?? 0}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="stat-label">Net P&L</div>
+                        <div className={clsx('text-lg font-bold font-mono', (s.net_pnl ?? 0) >= 0 ? 'text-profit' : 'text-loss')}>
+                          ₹{s.net_pnl?.toLocaleString()}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="stat-label">Expectancy / Trade</div>
+                        <div className={clsx('text-lg font-bold font-mono', (s.expectancy ?? 0) >= 0 ? 'text-profit' : 'text-loss')}>
+                          ₹{s.expectancy?.toLocaleString()}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Risk & Performance */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <MetricCard label="Profit Factor" value={s.profit_factor?.toFixed(2)} color={s.profit_factor >= 1 ? 'text-profit' : 'text-loss'} />
+                  <MetricCard label="Sharpe Ratio" value={s.sharpe_ratio?.toFixed(2)} />
+                  <MetricCard label="Max Drawdown" value={`₹${s.max_drawdown?.toLocaleString()}`} color="text-loss" />
+                  <MetricCard label="Max DD %" value={`${s.max_drawdown_pct}%`} color="text-loss" />
+                  <MetricCard label="Avg Win" value={`₹${s.avg_win?.toLocaleString()}`} color="text-profit" />
+                  <MetricCard label="Avg Loss" value={`₹${Math.abs(s.avg_loss)?.toLocaleString()}`} color="text-loss" />
+                  <MetricCard label="Largest Win" value={`₹${s.largest_win?.toLocaleString()}`} color="text-profit" />
+                  <MetricCard label="Largest Loss" value={`₹${Math.abs(s.largest_loss)?.toLocaleString()}`} color="text-loss" />
+                </div>
+
+                {/* CE/PE breakdown + Capital */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <MetricCard
+                    label="CE Trades"
+                    value={`${s.ce_trades}`}
+                    subtitle={`₹${s.ce_pnl?.toLocaleString()}`}
+                    subtitleColor={(s.ce_pnl ?? 0) >= 0 ? 'text-profit' : 'text-loss'}
+                  />
+                  <MetricCard
+                    label="PE Trades"
+                    value={`${s.pe_trades}`}
+                    subtitle={`₹${s.pe_pnl?.toLocaleString()}`}
+                    subtitleColor={(s.pe_pnl ?? 0) >= 0 ? 'text-profit' : 'text-loss'}
+                  />
+                  <MetricCard label="Initial Capital" value={`₹${s.initial_capital?.toLocaleString()}`} />
+                  <MetricCard label="Final Capital" value={`₹${s.final_capital?.toLocaleString()}`} color={s.final_capital >= s.initial_capital ? 'text-profit' : 'text-loss'} />
+                </div>
               </div>
             )}
 
@@ -463,9 +519,11 @@ export default function BacktestPage() {
                           <th className="px-3 py-2.5 text-left">Type</th>
                           <th className="px-3 py-2.5 text-right">Entry</th>
                           <th className="px-3 py-2.5 text-right">Exit</th>
-                          <th className="px-3 py-2.5 text-right">P&L</th>
+                          <th className="px-3 py-2.5 text-right">Gross</th>
+                          <th className="px-3 py-2.5 text-right">Net</th>
                           <th className="px-3 py-2.5 text-left">Reason</th>
                           <th className="px-3 py-2.5 text-left">Grade</th>
+                          <th className="px-3 py-2.5 text-left">OI</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -486,14 +544,31 @@ export default function BacktestPage() {
                             </td>
                             <td className="px-3 py-2 text-right font-mono text-slate-300">₹{t.entry_price?.toFixed(2)}</td>
                             <td className="px-3 py-2 text-right font-mono text-slate-300">₹{t.exit_price?.toFixed(2)}</td>
-                            <td className={clsx('px-3 py-2 text-right font-mono font-semibold', t.pnl >= 0 ? 'text-profit' : 'text-loss')}>
-                              {t.pnl >= 0 ? '+' : ''}₹{t.pnl?.toFixed(0)}
+                            <td className={clsx('px-3 py-2 text-right font-mono font-semibold', (t.pnl ?? 0) >= 0 ? 'text-profit' : 'text-loss')}>
+                              {(t.pnl ?? 0) >= 0 ? '+' : ''}₹{t.pnl?.toFixed(0)}
+                            </td>
+                            <td className={clsx('px-3 py-2 text-right font-mono', (t.net_pnl ?? t.pnl ?? 0) >= 0 ? 'text-profit' : 'text-loss')}>
+                              {(t.net_pnl ?? t.pnl ?? 0) >= 0 ? '+' : ''}₹{(t.net_pnl ?? t.pnl)?.toFixed(0)}
                             </td>
                             <td className="px-3 py-2 text-slate-400">{t.exit_reason}</td>
                             <td className="px-3 py-2">
-                              <span className={clsx('badge', t.grade === 'A+' || t.grade === 'A' ? 'badge-green' : 'badge-yellow')}>
-                                {t.grade}
+                              <span className={clsx('badge', t.grade === 'A+' || t.grade === 'A' ? 'badge-green' : t.grade === 'B' ? 'badge-yellow' : 'badge-red')}>
+                                {t.grade || '—'}
                               </span>
+                            </td>
+                            <td className="px-3 py-2">
+                              {t.oi_signal ? (
+                                <span className={clsx(
+                                  'text-[10px] font-semibold px-1.5 py-0.5 rounded',
+                                  t.oi_signal === 'LONG_BUILDUP' ? 'bg-green-950 text-profit' :
+                                  t.oi_signal === 'SHORT_BUILDUP' ? 'bg-red-950 text-loss' :
+                                  'bg-slate-800 text-slate-400'
+                                )}>
+                                  {t.oi_signal.replace('_', ' ')}
+                                </span>
+                              ) : (
+                                <span className="text-slate-600">—</span>
+                              )}
                             </td>
                           </tr>
                         ))}
@@ -511,30 +586,45 @@ export default function BacktestPage() {
                     {selectedTrade ? (
                       <div className="space-y-3 animate-in">
                         <div className="text-center pb-3 border-b border-surface-3/60">
-                          <span className={clsx('text-xl font-bold', selectedTrade.pnl >= 0 ? 'text-profit' : 'text-loss')}>
-                            {selectedTrade.pnl >= 0 ? '+' : ''}₹{selectedTrade.pnl?.toFixed(0)}
+                          <span className={clsx('text-xl font-bold', (selectedTrade.net_pnl ?? selectedTrade.pnl) >= 0 ? 'text-profit' : 'text-loss')}>
+                            {(selectedTrade.net_pnl ?? selectedTrade.pnl) >= 0 ? '+' : ''}₹{(selectedTrade.net_pnl ?? selectedTrade.pnl)?.toFixed(0)}
                           </span>
                           <div className="text-xs text-slate-500 mt-1">
                             {selectedTrade.strike?.toFixed(0)} {selectedTrade.option_type}
+                            {selectedTrade.grade && <span className="ml-2 text-accent">Grade {selectedTrade.grade}</span>}
                           </div>
                         </div>
                         <DetailRow label="Entry Price" value={`₹${selectedTrade.entry_price?.toFixed(2)}`} />
                         <DetailRow label="Exit Price" value={`₹${selectedTrade.exit_price?.toFixed(2)}`} />
+                        <DetailRow label="Quantity" value={`${selectedTrade.quantity}`} />
                         <DetailRow label="Stop Loss" value={`₹${selectedTrade.stop_loss?.toFixed(2)}`} />
                         <DetailRow label="Target" value={`₹${selectedTrade.target?.toFixed(2)}`} />
-                        <DetailRow label="Entry Time" value={selectedTrade.entry_time?.slice(0, 16)} />
-                        <DetailRow label="Exit Time" value={selectedTrade.exit_time?.slice(0, 16)} />
-                        <DetailRow label="Exit Reason" value={selectedTrade.exit_reason} highlight />
-                        <DetailRow label="Entry Reason" value={selectedTrade.reason || '—'} />
-                        <DetailRow label="Grade" value={selectedTrade.grade} />
-                        <DetailRow label="Confidence" value={`${(selectedTrade.confidence * 100).toFixed(0)}%`} />
-                        {/* RR achieved */}
+                        <div className="border-t border-surface-3/40 pt-2" />
+                        <DetailRow label="Gross P&L" value={`₹${selectedTrade.pnl?.toFixed(2)}`} highlight />
+                        {selectedTrade.costs != null && (
+                          <DetailRow label="Costs" value={`-₹${selectedTrade.costs?.toFixed(2)}`} />
+                        )}
+                        {selectedTrade.net_pnl != null && (
+                          <DetailRow label="Net P&L" value={`₹${selectedTrade.net_pnl?.toFixed(2)}`} highlight />
+                        )}
+                        <div className="border-t border-surface-3/40 pt-2" />
+                        <DetailRow label="Entry Time" value={selectedTrade.entry_time?.replace('T', ' ')?.slice(0, 16) || '—'} />
+                        <DetailRow label="Exit Time" value={selectedTrade.exit_time?.replace('T', ' ')?.slice(0, 16) || '—'} />
+                        <DetailRow label="Exit Reason" value={selectedTrade.exit_reason || '—'} highlight />
+                        <DetailRow label="Signal Reason" value={selectedTrade.reason || '—'} />
+                        <DetailRow label="Confidence" value={selectedTrade.confidence != null ? `${(selectedTrade.confidence * 100).toFixed(0)}%` : '—'} />
+                        {selectedTrade.underlying_entry && (
+                          <DetailRow label="Underlying" value={`₹${selectedTrade.underlying_entry?.toFixed(2)}`} />
+                        )}
+                        {selectedTrade.oi_signal && (
+                          <DetailRow label="OI Signal" value={selectedTrade.oi_signal.replace('_', ' ')} highlight />
+                        )}
                         {selectedTrade.entry_price && selectedTrade.stop_loss && (
                           <DetailRow
                             label="R:R Achieved"
                             value={(() => {
                               const risk = Math.abs(selectedTrade.entry_price - selectedTrade.stop_loss);
-                              return risk > 0 ? `${(selectedTrade.pnl / (risk * selectedTrade.quantity || 1)).toFixed(2)}R` : '—';
+                              return risk > 0 ? `${(selectedTrade.pnl / (risk * (selectedTrade.quantity || 1))).toFixed(2)}R` : '—';
                             })()}
                             highlight
                           />
@@ -554,10 +644,13 @@ export default function BacktestPage() {
   );
 }
 
-function MetricCard({ label, value, color }: { label: string; value: any; color?: string }) {
+function MetricCard({ label, value, color, subtitle, subtitleColor }: {
+  label: string; value: any; color?: string; subtitle?: string; subtitleColor?: string;
+}) {
   return (
     <div className="card p-4">
       <div className={clsx('text-lg font-bold font-mono', color || 'text-white')}>{value}</div>
+      {subtitle && <div className={clsx('text-xs font-mono mt-0.5', subtitleColor || 'text-slate-400')}>{subtitle}</div>}
       <div className="stat-label">{label}</div>
     </div>
   );

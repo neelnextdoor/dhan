@@ -236,8 +236,8 @@ async def run_backtest(req: BacktestRequest, user: str = Depends(get_current_use
 
 def _run_backtest_sync(req: BacktestRequest) -> dict:
     from src.core.config import AppConfig
-    from src.strategy.ema_strategy import EMAStrategy
-    from src.backtest.engine import BacktestEngine
+    from src.strategy.option_ema_strategy import OptionEMAStrategy
+    from src.backtest.options_backtester import OptionsBacktester
     from src.backtest.report import BacktestReport
 
     config = AppConfig.load()
@@ -257,6 +257,9 @@ def _run_backtest_sync(req: BacktestRequest) -> dict:
         df = pd.read_csv(config.backtest.csv_path, parse_dates=["timestamp"])
         if "timestamp" in df.columns:
             df.set_index("timestamp", inplace=True)
+        for col in ("open", "high", "low", "close", "volume"):
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
     else:
         from src.data.dhan_client import DhanClient
         client = DhanClient(config)
@@ -268,8 +271,8 @@ def _run_backtest_sync(req: BacktestRequest) -> dict:
     if df.empty:
         return {"summary": {"error": "No data"}, "trades": [], "equity_curve": []}
 
-    strategy = EMAStrategy(config)
-    engine = BacktestEngine(config, strategy)
+    strategy = OptionEMAStrategy(config)
+    engine = OptionsBacktester(config, strategy)
     trades = engine.run(df)
 
     report = BacktestReport(

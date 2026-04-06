@@ -83,6 +83,14 @@ class TradeGrade(str, Enum):
     C = "C"
 
 
+class OISignal(str, Enum):
+    LONG_BUILDUP = "LONG_BUILDUP"
+    SHORT_BUILDUP = "SHORT_BUILDUP"
+    LONG_UNWINDING = "LONG_UNWINDING"
+    SHORT_COVERING = "SHORT_COVERING"
+    NEUTRAL = "NEUTRAL"
+
+
 TIMEFRAME_MAP = {
     "1m": 1,
     "5m": 5,
@@ -96,4 +104,5 @@ EXCHANGE_MAP = {
     "BSE": "BSE_EQ",
     "NFO": "NSE_FNO",
     "MCX": "MCX_COMM",
+    "IDX_I": "IDX_I",
 }

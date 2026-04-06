@@ -141,7 +141,7 @@ export default function TradesPage() {
                       <tr key={`${t.trade_id}-detail`}>
                         <td colSpan={8} className="px-4 py-4 bg-surface-2/30">
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs animate-in">
-                            <DetailItem label="Symbol" value={t.symbol} />
+                            <DetailItem label="Symbol" value={t.symbol || '—'} />
                             <DetailItem label="Underlying" value={t.underlying_price ? `₹${t.underlying_price.toFixed(2)}` : '—'} />
                             <DetailItem label="Stop Loss" value={`₹${t.stop_loss?.toFixed(2)}`} />
                             <DetailItem label="Target" value={`₹${t.target?.toFixed(2)}`} />

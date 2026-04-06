@@ -157,13 +157,18 @@ class BacktestReport:
     def export_trades_csv(self, path: str = "backtest_results/trades.csv") -> str:
         out = Path(path)
         out.parent.mkdir(parents=True, exist_ok=True)
-        with open(out, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=[
+        if self.trades:
+            fieldnames = list(self.trades[0].to_dict().keys())
+        else:
+            fieldnames = [
                 "trade_id", "side", "option_type", "strike",
                 "entry_price", "entry_time", "exit_price", "exit_time",
                 "quantity", "stop_loss", "target", "underlying_entry",
-                "exit_reason", "pnl", "reason",
-            ])
+                "exit_reason", "pnl", "costs", "net_pnl", "reason",
+                "grade", "confidence",
+            ]
+        with open(out, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for t in self.trades:
                 writer.writerow(t.to_dict())

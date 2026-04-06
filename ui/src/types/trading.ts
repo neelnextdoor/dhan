@@ -36,7 +36,7 @@ export interface ActiveTrade {
 
 export interface Trade {
   trade_id: string;
-  symbol: string;
+  symbol?: string;
   side: string;
   option_type: string | null;
   strike: number;
@@ -49,8 +49,15 @@ export interface Trade {
   exit_time: string | null;
   exit_reason: string | null;
   pnl: number;
-  status: string;
-  underlying_price: number;
+  costs?: number;
+  net_pnl?: number;
+  status?: string;
+  underlying_price?: number;
+  underlying_entry?: number;
+  reason?: string;
+  grade?: string;
+  confidence?: number;
+  oi_signal?: string;
 }
 
 export interface Candle {
@@ -75,6 +82,7 @@ export interface BacktestSummary {
   losing_trades: number;
   win_rate: number;
   total_pnl: number;
+  total_commission: number;
   net_pnl: number;
   avg_win: number;
   avg_loss: number;

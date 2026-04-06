@@ -8,3 +8,4 @@ requests>=2.31
 websocket-client>=1.6
 schedule>=1.2
 colorama>=0.4
+matplotlib>=3.7

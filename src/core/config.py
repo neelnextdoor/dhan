@@ -21,6 +21,34 @@ class EMAConfig:
 
 
 @dataclass
+class StrategyConfig:
+    """MA-EMA crossover strategy parameters."""
+    ma_period: int = 7
+    ema_period: int = 7
+    entry_timeframe: str = "5m"
+    confirmation_timeframe: str = "15m"
+    use_multi_timeframe: bool = True
+    use_oi_confirmation: bool = True
+    use_volume_filter: bool = True
+    volume_multiplier: float = 1.5
+    volume_lookback: int = 20
+    cooldown_seconds: int = 300
+    min_grade: str = "B"
+
+
+@dataclass
+class OIConfig:
+    """Open Interest confirmation parameters."""
+    enabled: bool = True
+    lookback_periods: int = 5
+    min_oi_change_pct: float = 1.0
+    reject_unwinding: bool = True
+    use_pcr: bool = False
+    pcr_bullish_threshold: float = 0.7
+    pcr_bearish_threshold: float = 1.3
+
+
+@dataclass
 class MultiTimeframeConfig:
     enabled: bool = True
     higher_tf_minutes: int = 15
@@ -167,6 +195,7 @@ class OptionsConfig:
     max_premium: float = 500.0
     avoid_last_hour_entry: bool = True
     theta_decay_exit_minutes: int = 45
+    enable_selling: bool = False
 
 
 @dataclass
@@ -191,6 +220,19 @@ class BacktestConfig:
 
 
 @dataclass
+class VisualizationConfig:
+    enabled: bool = True
+    show_entry_exit: bool = True
+    show_equity_curve: bool = True
+    show_option_premium: bool = True
+    save_plots: bool = True
+    output_dir: str = "backtest_results/plots"
+    figsize_width: int = 16
+    figsize_height: int = 10
+    style: str = "seaborn-v0_8-darkgrid"
+
+
+@dataclass
 class AppConfig:
     symbol: str = "NIFTY"
     exchange: str = "NSE"
@@ -201,6 +243,8 @@ class AppConfig:
     lookback_candles: int = 200
 
     ema: EMAConfig = field(default_factory=EMAConfig)
+    strategy: StrategyConfig = field(default_factory=StrategyConfig)
+    oi: OIConfig = field(default_factory=OIConfig)
     multi_timeframe: MultiTimeframeConfig = field(default_factory=MultiTimeframeConfig)
     entry: EntryConfig = field(default_factory=EntryConfig)
     sideways_filter: SidewaysFilterConfig = field(default_factory=SidewaysFilterConfig)
@@ -214,6 +258,7 @@ class AppConfig:
     webhook: WebhookConfig = field(default_factory=WebhookConfig)
     paper_trading: PaperTradingConfig = field(default_factory=PaperTradingConfig)
     backtest: BacktestConfig = field(default_factory=BacktestConfig)
+    visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
 
     dhan_client_id: str = ""
     dhan_access_token: str = ""
@@ -245,6 +290,10 @@ class AppConfig:
 
         if "ema" in raw:
             cfg.ema = _from_dict(EMAConfig, raw["ema"])
+        if "strategy" in raw:
+            cfg.strategy = _from_dict(StrategyConfig, raw["strategy"])
+        if "oi" in raw:
+            cfg.oi = _from_dict(OIConfig, raw["oi"])
         if "multi_timeframe" in raw:
             cfg.multi_timeframe = _from_dict(MultiTimeframeConfig, raw["multi_timeframe"])
         if "entry" in raw:
@@ -279,6 +328,8 @@ class AppConfig:
             cfg.paper_trading = _from_dict(PaperTradingConfig, raw["paper_trading"])
         if "backtest" in raw:
             cfg.backtest = _from_dict(BacktestConfig, raw["backtest"])
+        if "visualization" in raw:
+            cfg.visualization = _from_dict(VisualizationConfig, raw["visualization"])
 
         cfg.dhan_client_id = os.getenv("DHAN_CLIENT_ID", "")
         cfg.dhan_access_token = os.getenv("DHAN_ACCESS_TOKEN", "")
