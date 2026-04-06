@@ -86,6 +86,44 @@ class ContractSelector:
 
         return False, ""
 
+    @staticmethod
+    def _extract_contracts(chain: dict) -> list[dict]:
+        """Extract contract list from various Dhan option chain response formats."""
+        data = chain.get("data", chain)
+
+        # Format 1: {"data": [{"optionType": "CALL", ...}, ...]}
+        if isinstance(data, list):
+            if data and isinstance(data[0], dict):
+                return data
+            # Format 2: {"data": ["str1", "str2"]} — not usable
+            logger.debug("Option chain data is list of non-dicts, checking nested")
+
+        # Format 3: {"data": {"oc": [...], ...}} or {"data": {"options": [...]}}
+        if isinstance(data, dict):
+            for key in ("oc", "options", "optionChain", "option_chain"):
+                nested = data.get(key)
+                if isinstance(nested, list) and nested and isinstance(nested[0], dict):
+                    return nested
+            # Format 4: {"data": {strike: {ce: {...}, pe: {...}}, ...}}
+            contracts = []
+            for strike_key, val in data.items():
+                if isinstance(val, dict):
+                    for side_key in ("ce", "pe", "CE", "PE", "call", "put", "CALL", "PUT"):
+                        side_data = val.get(side_key)
+                        if isinstance(side_data, dict) and ("strikePrice" in side_data or "strike_price" in side_data or "ltp" in side_data):
+                            ot = "CALL" if side_key.upper() in ("CE", "CALL") else "PUT"
+                            side_data.setdefault("optionType", ot)
+                            try:
+                                side_data.setdefault("strikePrice", float(strike_key))
+                            except (ValueError, TypeError):
+                                pass
+                            contracts.append(side_data)
+            if contracts:
+                return contracts
+
+        logger.warning("Could not parse option chain format. Keys: %s", list(chain.keys()) if isinstance(chain, dict) else type(chain))
+        return []
+
     def _passes_premium_filter(self, premium: float) -> bool:
         if premium <= 0:
             return True
@@ -124,7 +162,7 @@ class ContractSelector:
         opt_type: OptionType,
         underlying_price: float,
     ) -> OptionContract:
-        contracts = chain.get("data", [])
+        contracts = self._extract_contracts(chain)
         if not contracts:
             logger.warning("Empty option chain, returning synthetic contract")
             return OptionContract(
@@ -142,14 +180,15 @@ class ContractSelector:
         best_diff = float("inf")
 
         for entry in contracts:
-            entry_type = entry.get("optionType") or entry.get("drvOptionType", "")
+            if not isinstance(entry, dict):
+                continue
+            entry_type = entry.get("optionType") or entry.get("drvOptionType") or entry.get("option_type", "")
             if entry_type.upper() != opt_key:
                 continue
 
-            entry_strike = float(entry.get("strikePrice") or entry.get("drvStrikePrice", 0))
-            entry_ltp = float(entry.get("ltp") or entry.get("last_price", 0))
+            entry_strike = float(entry.get("strikePrice") or entry.get("drvStrikePrice") or entry.get("strike_price", 0))
+            entry_ltp = float(entry.get("ltp") or entry.get("last_price") or entry.get("LTP", 0))
 
-            # Prefer contracts within premium range
             in_range = self._passes_premium_filter(entry_ltp) if entry_ltp > 0 else True
             diff = abs(entry_strike - target_strike)
             adjusted_diff = diff if in_range else diff + 10000

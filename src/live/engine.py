@@ -298,7 +298,7 @@ class LiveEngine:
     # ------------------------------------------------------------------
     def _enter_option(self, signal, underlying_price: float) -> None:
         chain = None
-        if self.client and self.mode == TradingMode.LIVE:
+        if self.client:
             chain = self.client.get_option_chain(
                 underlying_security_id=self.config.security_id,
                 expiry=self.config.expiry,
@@ -308,12 +308,20 @@ class LiveEngine:
             signal.type, underlying_price, chain,
         )
 
+        # Fetch real-time LTP for the selected contract
+        if contract.ltp <= 0 and contract.security_id and self.client:
+            live_ltp = self.client.get_option_ltp(contract.security_id)
+            if live_ltp > 0:
+                contract.ltp = live_ltp
+                logger.info("Fetched live option LTP: %s = ₹%.2f", contract.display_name(), live_ltp)
+
         if contract.ltp > 0:
             premium = contract.ltp
         else:
             premium = estimate_option_premium(
                 underlying_price, contract.strike, contract.option_type,
             )
+            logger.info("Using estimated premium: ₹%.2f (no live data)", premium)
 
         if self.config.options.use_premium_based_sl:
             sl = premium * (1 - self.config.options.premium_sl_pct / 100)
@@ -412,9 +420,20 @@ class LiveEngine:
                     self._exit_position(ExitReason.OPPOSITE_SIGNAL, current_premium)
 
     def _get_current_premium(self, trade, underlying_price: float) -> float:
+        # Try fetching live LTP from Dhan
+        sec_id = (self._active_contract.security_id if self._active_contract else None) or trade.option_security_id
+        if sec_id and self.client:
+            live_ltp = self.client.get_option_ltp(sec_id)
+            if live_ltp > 0:
+                if self._active_contract:
+                    self._active_contract.ltp = live_ltp
+                return live_ltp
+
+        # Cached LTP from contract object
         if self._active_contract and self._active_contract.ltp > 0:
             return self._active_contract.ltp
 
+        # Fallback to estimation
         if trade.is_option:
             return estimate_option_premium(
                 underlying_price, trade.strike, trade.option_type,

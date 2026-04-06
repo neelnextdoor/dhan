@@ -275,6 +275,49 @@ class DhanClient:
             return []
 
     # ------------------------------------------------------------------
+    # Market quotes / LTP
+    # ------------------------------------------------------------------
+    def get_ltp(self, security_id: str, exchange_segment: str = "NSE_FNO") -> float:
+        """Fetch real-time LTP for a single security (option contract)."""
+        exch = _EXCHANGE_SEGMENT.get(exchange_segment, exchange_segment)
+        self._throttle()
+        try:
+            securities = {exch: [int(security_id)]}
+            resp = self.dhan.market_feed.ticker_data(securities)
+            if isinstance(resp, dict) and resp.get("status") != "failure":
+                data = resp.get("data", {})
+                sec_data = data.get(str(security_id)) or data.get(security_id)
+                if isinstance(sec_data, dict):
+                    ltp = float(sec_data.get("last_price", 0) or sec_data.get("LTP", 0) or sec_data.get("ltp", 0))
+                    if ltp > 0:
+                        return ltp
+                # Try flat response structure
+                for key, val in data.items():
+                    if isinstance(val, dict):
+                        ltp = float(val.get("last_price", 0) or val.get("LTP", 0) or val.get("ltp", 0))
+                        if ltp > 0:
+                            return ltp
+            logger.debug("LTP response for %s: %s", security_id, resp)
+        except AttributeError:
+            # Older SDK without market_feed - try alternative
+            try:
+                resp = self.dhan.get_market_quote(security_id, exch)
+                if isinstance(resp, dict):
+                    data = resp.get("data", resp)
+                    ltp = float(data.get("last_price", 0) or data.get("LTP", 0) or data.get("ltp", 0))
+                    if ltp > 0:
+                        return ltp
+            except Exception:
+                pass
+        except Exception:
+            logger.debug("Failed to fetch LTP for %s", security_id, exc_info=True)
+        return 0.0
+
+    def get_option_ltp(self, security_id: str) -> float:
+        """Convenience wrapper for option LTP."""
+        return self.get_ltp(security_id, "NSE_FNO")
+
+    # ------------------------------------------------------------------
     # Position & order management
     # ------------------------------------------------------------------
     def get_positions(self) -> list[dict]:
