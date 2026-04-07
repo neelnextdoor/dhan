@@ -128,7 +128,7 @@ class EngineManager:
 
             from src.core.config import AppConfig
             from src.core.logger import setup_logging
-            from src.strategy.ema_strategy import EMAStrategy
+            from src.strategy.option_ema_strategy import OptionEMAStrategy
             from src.live.engine import LiveEngine
 
             config = AppConfig.load(config_path)
@@ -144,7 +144,7 @@ class EngineManager:
 
             self._config = config
 
-            strategy = EMAStrategy(config)
+            strategy = OptionEMAStrategy(config)
             engine = LiveEngine(config, strategy)
             self._engine = engine
 
